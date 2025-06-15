@@ -1,4 +1,7 @@
 #!/bin/bash
+
+# Reduced version of the create_geojson_year.bash script from this repo here: https://github.com/cartomap/nl
+
 set -e
 JAAR="$1"
 JAAR=${JAAR:=2025}
@@ -22,7 +25,6 @@ grep "<Title>" $TOC | sed -e 's/.*<Title>\(.*\)<[/]Title>/\1/' | sort |uniq > $R
 cat $REGIOTXT | grep  '_gegeneraliseerd' | grep -v '_niet_' - > $SHAPESTXT
 cat $REGIOTXT | grep "point" - > $POINTSTXT
 
-MAPSHAPER=./node_modules/mapshaper/bin/mapshaper
 #PDOKNAMES=`head -n 1 $SHAPESTXT`
 PDOKNAMES=`cat $SHAPESTXT`
 
@@ -50,20 +52,6 @@ do
     PARTS="$PARTS $PART"
   done
   echo "**** PARTS=$PARTS"
-
-  # get rijksdriehoeksstelsel (EPSG:28992)
-  JSON="build/rd/$REGION.json"
-  GEOJSON="build/rd/$REGION.geojson"
-  TOPOJSON="build/rd/$REGION.topojson"
-
-  PARTS=""
-  for STARTINDEX in $STEPS
-  do
-    PART="build/rd/${REGION}_${STARTINDEX}.json"
-    curl "$WFS?request=GetFeature&service=WFS&version=2.0.0&typeName=${TYPENAME}&outputFormat=json&srsName=urn:ogc:def:crs:EPSG::28992&STARTINDEX=$STARTINDEX" > $PART
-    PARTS="$PARTS $PART"
-  done
-  echo "**** PARTS=$PARTS"
 done
 
 # remove all original files
@@ -74,3 +62,5 @@ then
   echo "Failed to build files..."
   exit 1
 fi
+
+sed -E 's/"statnaam": "([^"]+)"/"NAME": "\1"/g' build/wgs84/gemeente_2025_0.json > ../assets/municipality-nl.json

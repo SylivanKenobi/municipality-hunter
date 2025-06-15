@@ -1,0 +1,6 @@
+- [ ] Count how many municipalites per canton if all have been ridden change color of whole canton
+- [ ] Add municipality stats to database
+- [ ] Test if geojson with data can be stored in database
+- [ ] create pipeline for geojson files
+- [ ] create deployment
+- [ ] filter map for activity type

@@ -1,4 +1,4 @@
-const map = L.map('map').setView([46.79886210, 7.70807010], 13);
+const map = L.map('map').setView([46.79886210, 7.70807010], 6);
 
 const tiles = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -14,10 +14,8 @@ info.onAdd = function (map) {
     return this._div;
 };
 info.update = function (props) {
-    if (typeof props !== 'undefined')
-        var name = props.NAME || props.statnaam
-        const contents = props ? `<b>${name}</b><br />${props.EINWOHNERZ} people` : 'Hover over a municipality';
-        this._div.innerHTML = `<h4>US Population Density</h4>${contents}`;
+    const contents = props ? `<b>${props.NAME}</b><br />${props.EINWOHNERZ} people` : 'Hover over a municipality';
+    this._div.innerHTML = `<h4>US Population Density</h4>${contents}`;
 };
 
 info.addTo(map);
@@ -25,34 +23,33 @@ info.addTo(map);
 for (let encoded of encodedRoutes) {
     var coordinates = L.Polyline.fromEncoded(encoded).getLatLngs();
 
-    L.polyline(
+    const polyline = L.polyline(
         coordinates,
         {
-            color: 'blue',
+            color: 'red',
             weight: 2,
             opacity: 1,
             lineJoin: 'round'
         }
     ).addTo(map);
+    polyline.bringToFront();
 }
 
-
-// get color depending on population density value
+// get color depending on if the municipality has been visited
 function getColor(d) {
-    return d < 100 ? '#800026' :
-           d < 10000  ? '#77db74' :
-           d < 100000  ? '#74dbd4' :
-                    '#FFEDA0';
+    return d == 1 ? '#0511fc' :
+           d == 0  ? '#058dfc' :
+                    '#058dfc';
 }
 
 function style(feature) {
     return {
-        weight: 2,
+        weight: 1,
         opacity: 1,
         color: 'white',
         dashArray: '3',
-        fillOpacity: 0.7,
-        fillColor: getColor(feature.properties.EINWOHNERZ)
+        fillOpacity: 0.3,
+        fillColor: getColor(feature.properties.visited)
     };
 }
 
@@ -62,11 +59,11 @@ function highlightFeature(e) {
     layer.setStyle({
         weight: 5,
         color: '#666',
-        dashArray: '',
-        fillOpacity: 0.7
+        dashArray: '1',
+        fillOpacity: 0.3
     });
 
-    layer.bringToFront();
+    layer.bringToBack();
 
     info.update(layer.feature.properties);
 }
@@ -77,8 +74,10 @@ const geojson = L.geoJson(municipalities, {
     onEachFeature
 }).addTo(map);
 
+geojson.bringToBack();
 function resetHighlight(e) {
-    geojson.resetStyle(e.target);
+    const layer = e.target;
+    geojson.resetStyle(layer);
     info.update();
 }
 

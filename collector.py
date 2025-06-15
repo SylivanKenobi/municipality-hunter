@@ -4,6 +4,7 @@ from psycopg2 import sql
 import requests
 import json
 from datetime import datetime
+from io import BytesIO
 # geo imports
 import geopandas as gpd
 import polyline
@@ -124,12 +125,12 @@ def insert_activities_to_db(activities, connection):
     connection.commit()
     print("✅ All activities written to database.")
 
-def write_activities_to_file(activities, filename="activities.json"):
+def write_activities_to_file(activities, filename="assets/activities.json"):
     with open(filename, "w") as f:
         json.dump(activities, f, indent=2)
     print(f"✅ Saved {len(activities)} activities to '{filename}'")
 
-def read_activities_from_file(filename="activities.json"):
+def read_json_file(filename):
     try:
         with open(filename, "r") as f:
             activities = json.load(f)
@@ -162,7 +163,8 @@ def get_token(config):
     response = requests.post(url, data=form_data)
     return response.json().get("access_token")
 
-def municipality_intersection(activities):
+def municipality_intersection(activities, municipalities):
+    municipalities_intersections = set()
     for activity in activities:
         if activity["map"]["summary_polyline"] == "":
             continue
@@ -170,18 +172,42 @@ def municipality_intersection(activities):
 
         # Flip to (lon, lat) for Shapely
         line = LineString([(lon, lat) for lat, lon in decoded_coords])
+        geo_df = gpd.GeoDataFrame.from_features(municipalities["features"])
 
-        # Step 2: Load the municipality boundaries from the URL
-        geo_df = gpd.read_file("municipality.json")
-
-        # Step 3: Check intersection with each municipality
+        # Check intersection with each municipality
         intersections = geo_df[geo_df.geometry.intersects(line)]
 
         if not intersections.empty:
-            print("Polyline intersects the following municipalities:")
-            print(intersections[["NAME", "geometry"]])
+            municipalities_intersections.update(intersections["NAME"].tolist())
         else:
             print("Polyline does not intersect any municipality.")
+    return municipalities_intersections
+
+def append_geojson(intersected_municipalities, municipalities):
+    new_features = []
+    for municipality in municipalities["features"]:
+        if municipality["properties"]["NAME"] in intersected_municipalities:
+            municipality["properties"]["visited"] = 1
+            new_features.append(municipality)
+        else:
+            municipality["properties"]["visited"] = 0
+            new_features.append(municipality)
+    
+    updated = {
+        "type": "FeatureCollection",
+        "features": new_features
+    }
+    with open("assets/municipality-merged-updated.json", "w") as f:
+        json.dump(updated, f, indent=4)
+
+def get_municipalities():
+    chMun = read_json_file("assets/municipality-ch.json")
+    nlMun = read_json_file("assets/municipality-nl.json")
+    merged = {
+        "type": "FeatureCollection",
+        "features": chMun["features"] + nlMun["features"]
+    }
+    return merged
 
 def main():
     config = configparser.ConfigParser()
@@ -208,12 +234,15 @@ def main():
     # bearer_token = get_token(config)
     # activities = get_all_strava_activities(bearer_token)
     # write_activities_to_file(activities)
-    activities = read_activities_from_file()
-    municipality_intersection(activities)
+    activities = read_json_file("assets/activities.json")
+    municipalities = get_municipalities()
+    intersected_municipalities = municipality_intersection(activities, municipalities)
+    append_geojson(intersected_municipalities, municipalities)
+
     # insert_activities_to_db(activities, connection)
     # print(activities)
-    cur.close()
-    connection.close()
+    # cur.close()
+    # connection.close()
     print("🔒 Connection closed.")
 
 if __name__ == "__main__":

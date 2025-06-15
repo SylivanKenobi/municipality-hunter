@@ -9,6 +9,8 @@ const turfBbox = require("@turf/bbox").default;
 const turfMeta = require("@turf/meta");
 const unzipper = require("unzipper");
 
+// Adapted version from this repository: https://github.com/rkaravia/swiss-boundaries-geojson
+
 const versions = [
   {
     version: "2025",
