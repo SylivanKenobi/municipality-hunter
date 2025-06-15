@@ -1,0 +1,22 @@
+apiVersion: 1
+datasources:
+  - name: influxdb
+    type: influxdb
+    isDefault: false
+    editable: true
+    user: $INFLUXDB_USER
+    database: $INFLUXDB_DB
+    url: http://$INFLUX_HOST:8086
+    secureJsonData:
+      password: $INFLUXDB_USER_PASSWORD
+  - name: Postgres
+    type: postgres
+    isDefault: true
+    editable: true
+    url: postgres:5432
+    user: postgres
+    secureJsonData:
+      password: "your_password"
+    jsonData:
+      sslmode: 'disable'
+      timescaledb: true

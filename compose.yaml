@@ -1,0 +1,31 @@
+version: '3'
+
+services:
+  grafana:
+    build:
+      context: .
+      dockerfile: grafana.Dockerfile
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_PANELS_DISABLE_SANITIZE_HTML: 'true'
+      GF_SECURITY_ADMIN_PASSWORD: password
+      POSTGRES_PASSWORD: your_password
+      POSTGRES_USERNAME: postgres
+    user: "472"
+    links:
+      - postgres
+  postgres:
+    image: timescale/timescaledb:latest-pg17
+    environment:
+      POSTGRES_PASSWORD: your_password
+    ports:
+      - 5432:5432
+
+  # strava:
+  #   image: strava:local
+  #   build:
+  #     context: .
+  #   links:
+  #     - postgres

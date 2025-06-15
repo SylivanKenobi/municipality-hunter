@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "swiss-maps": "^4.6.1",
+    "topojson-client": "^3.1.0"
+  }
+}
