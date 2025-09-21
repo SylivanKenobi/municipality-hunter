@@ -6,6 +6,7 @@ import json
 from datetime import datetime
 from io import BytesIO
 # geo imports
+from shapely.geometry import Point
 import geopandas as gpd
 import polyline
 from shapely.geometry import LineString
@@ -165,22 +166,30 @@ def get_token(config):
 
 def municipality_intersection(activities, municipalities):
     municipalities_intersections = set()
+
+    # Load once
+    geo_df = gpd.GeoDataFrame.from_features(municipalities["features"])
+    sindex = geo_df.sindex  # spatial index
+
     for activity in activities:
         if activity["map"]["summary_polyline"] == "":
             continue
-        decoded_coords = polyline.decode(activity["map"]["summary_polyline"])  # returns list of (lat, lon)
 
-        # Flip to (lon, lat) for Shapely
-        line = LineString([(lon, lat) for lat, lon in decoded_coords])
-        geo_df = gpd.GeoDataFrame.from_features(municipalities["features"])
+        decoded_coords = polyline.decode(activity["map"]["summary_polyline"])  # (lat, lon)
 
-        # Check intersection with each municipality
-        intersections = geo_df[geo_df.geometry.intersects(line)]
+        for lat, lon in decoded_coords:
+            point = Point(lon, lat)
 
-        if not intersections.empty:
+            # Use spatial index for candidates (fast bounding box check)
+            candidate_idx = list(sindex.intersection(point.bounds))
+            if not candidate_idx:
+                continue
+
+            # Now check actual geometry containment only on candidates
+            intersections = geo_df.iloc[candidate_idx][geo_df.iloc[candidate_idx].geometry.contains(point)]
+
             municipalities_intersections.update(intersections["NAME"].tolist())
-        else:
-            print("Polyline does not intersect any municipality.")
+
     return municipalities_intersections
 
 def append_geojson(intersected_municipalities, municipalities):
@@ -231,10 +240,10 @@ def main():
     except Exception as e:
         print("❌ Error connecting to PostgreSQL:", e)
     
-    # bearer_token = get_token(config)
-    # activities = get_all_strava_activities(bearer_token)
+    bearer_token = get_token(config)
+    activities = get_all_strava_activities(bearer_token)
     # write_activities_to_file(activities)
-    activities = read_json_file("assets/activities.json")
+    # activities = read_json_file("assets/activities.json")
     municipalities = get_municipalities()
     intersected_municipalities = municipality_intersection(activities, municipalities)
     append_geojson(intersected_municipalities, municipalities)
