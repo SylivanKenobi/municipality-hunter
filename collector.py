@@ -1,133 +1,128 @@
 import configparser
 import psycopg2
-from psycopg2 import sql
 import requests
 import json
 from datetime import datetime
-from io import BytesIO
 import time
-# geo imports
 from shapely.geometry import Point
 import geopandas as gpd
 import polyline
-from shapely.geometry import LineString
 
-def get_remaining_requests(access_token):
-    """Check current rate limits from Strava headers."""
-    resp = requests.get(
-        "https://www.strava.com/api/v3/athlete",
-        headers={"Authorization": f"Bearer {access_token}"}
-    )
-    if "X-RateLimit-Usage" in resp.headers and "X-RateLimit-Limit" in resp.headers:
-        used = list(map(int, resp.headers["X-RateLimit-Usage"].split(",")))
-        limit = list(map(int, resp.headers["X-RateLimit-Limit"].split(",")))
-        print("used/limit")
-        print(used)
-        print(limit)
-        remaining = [l - u for u, l in zip(used, limit)]
-        return remaining  # [15min_remaining, daily_remaining]
-    return [0, 0]
 
-def fetch_highres_polyline(activity_id, access_token):
-    """Fetch one activity with detailed polyline."""
-    resp = requests.get(
-        f"https://www.strava.com/api/v3/activities/{activity_id}",
-        headers={"Authorization": f"Bearer {access_token}"},
-        params={"include_all_efforts": False}
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    return data.get("map", {}).get("polyline")
+# ------------------------------
+# Generic Strava API Request
+# ------------------------------
+def strava_request(url, token, params=None, method="GET", data=None):
+    """Generic request wrapper for Strava API with logging."""
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        if method == "GET":
+            response = requests.get(url, headers=headers, params=params or {})
+        else:
+            response = requests.post(url, headers=headers, data=data or {})
+    except requests.RequestException as e:
+        print(f"❌ Request failed: {e}")
+        return None
 
-def insert_highres_polylines(access_token, connection):
-    with connection.cursor() as cur:
-        # Find activities missing highres polyline
-        cur.execute("""
-            SELECT a.id
-            FROM activities a
-            LEFT JOIN activity_polylines p ON a.id = p.activity_id
-            WHERE p.activity_id IS NULL
-            AND a.polyline != ''
-            ORDER BY a.time DESC
-        """)
-        missing_ids = [row[0] for row in cur.fetchall()]
+    # Log request/responseonse details
+    print(f"🌐 {method} {url} -> {response.status_code}")
+    if not response.ok:
+        if "X-RateLimit-Usage" in response.headers and "X-RateLimit-Limit" in response.headers:
+            print(f"   Usage: {response.headers['X-ReadRateLimit-Usage']} / Limit: {response.headers['X-ReadRateLimit-Limit']}")
+        print(f"   ❌ {response.text}")
+        return None
 
-    if not missing_ids:
-        print("✅ All polylines already fetched.")
-        return
+    return response
 
-    # Check API quota
-    remaining_15min, remaining_day = get_remaining_requests(access_token)
 
-    max_allowed = min(remaining_15min, remaining_day, len(missing_ids))
+# ------------------------------
+# Strava API helpers
+# ------------------------------
+def fetch_rate_limits(token):
+    """Fetch current rate limit usage."""
+    response = strava_request("https://www.strava.com/api/v3/athlete", token)
+    if response is None:
+        return [0, 0]
+    used = list(map(int, response.headers["X-ReadRateLimit-Usage"].split(",")))
+    limit = list(map(int, response.headers["X-ReadRateLimit-Limit"].split(",")))
+    remaining = [l - u for u, l in zip(used, limit)]
+    return remaining  # [15min_remaining, daily_remaining]
 
-    if max_allowed <= 0:
-        print("No quota left for Polylines")
-        return False
-    with connection.cursor() as cur:
-        for i, activity_id in enumerate(missing_ids[:max_allowed], start=1):
-            try:
-                polyline = fetch_highres_polyline(activity_id, access_token)
-                if polyline:
-                    cur.execute(
-                        """
-                        INSERT INTO activity_polylines (activity_id, polyline_highres)
-                        VALUES (%s, %s)
-                        """,
-                        (activity_id, polyline)
-                    )
-                    print(f"✅ Inserted polyline for activity {activity_id}")
-                else:
-                    print(f"⚠️ No polyline for activity {activity_id}")
-            except Exception as e:
-                print(f"❌ Error fetching activity {activity_id}: {e}")
-                print(response.headers)
-                return False
 
-    connection.commit()
-    print("🏁 Done updating high-res polylines.")
+def fetch_activity_detail(activity_id, token):
+    """Fetch a single activity with high-resolution polyline."""
+    url = f"https://www.strava.com/api/v3/activities/{activity_id}"
+    response = strava_request(url, token, params={"include_all_efforts": False})
+    if response is None:
+        return None
+    return response.json().get("map", {}).get("polyline")
 
+
+def fetch_activities(token, after=0, per_page=200):
+    """Fetch all activities since `after` timestamp."""
+    all_activities = []
+    page = 1
+
+    while True:
+        print(f"📄 Page {page}")
+        url = f"https://www.strava.com/api/v3/athlete/activities"
+        response = strava_request(url, token, params={"page": page, "per_page": per_page, "after": after})
+        if response is None:
+            break
+
+        activities = response.json()
+        if not activities:
+            break
+
+        all_activities.extend(activities)
+        page += 1
+
+    return all_activities
+
+
+def fetch_latest_activity_id(token):
+    """Fetch the newest activity ID from Strava."""
+    url = "https://www.strava.com/api/v3/athlete/activities?page=1&per_page=1"
+    response = strava_request(url, token)
+    if response is None:
+        return None
+    activities = response.json()
+    return activities[0]["id"] if activities else None
+
+
+# ------------------------------
+# Database helpers
+# ------------------------------
 def get_connection(config):
-    # Load connection details from environment variables or use defaults
-    dbname = config.get('DATABASE', 'PGDATABASE')
-    user = config.get('DATABASE', 'PGUSER')
-    password = config.get('DATABASE', 'PGPASSWORD')
-    host = config.get('DATABASE', 'PGHOST')
-    port = config.get('DATABASE', 'PGPORT')
-
-    # Connect to the PostgreSQL database
     conn = psycopg2.connect(
-        dbname=dbname,
-        user=user,
-        password=password,
-        host=host,
-        port=port
+        dbname=config.get('DATABASE', 'PGDATABASE'),
+        user=config.get('DATABASE', 'PGUSER'),
+        password=config.get('DATABASE', 'PGPASSWORD'),
+        host=config.get('DATABASE', 'PGHOST'),
+        port=config.get('DATABASE', 'PGPORT')
     )
     return conn
+
 
 def setup_database(connection):
     cur = connection.cursor()
 
-    # cur.execute("""
-    #     DROP TABLE IF EXISTS activity_polylines;
-    # """)
-
     cur.execute("""
         CREATE TABLE IF NOT EXISTS activities (
         time        TIMESTAMPTZ       NOT NULL,
-        id          bigint           NOT NULL,
-        type        text          NOT NULL,
-        polyline    text,
-        distance    decimal  ,
-        duration decimal,
-        avg_speed decimal,
-        max_speed decimal,
-        elevation decimal,
-        max_watts decimal,
-        average_watts decimal,
-        weighted_average_watts decimal,
-        year INTEGER,
-        raw_data JSONB NOT NULL
+        id          BIGINT            NOT NULL PRIMARY KEY,
+        type        TEXT              NOT NULL,
+        polyline    TEXT,
+        distance    DECIMAL,
+        duration    DECIMAL,
+        avg_speed   DECIMAL,
+        max_speed   DECIMAL,
+        elevation   DECIMAL,
+        max_watts   DECIMAL,
+        average_watts DECIMAL,
+        weighted_average_watts DECIMAL,
+        year        INTEGER,
+        raw_data    JSONB NOT NULL
       );
     """)
 
@@ -137,82 +132,25 @@ def setup_database(connection):
 
     cur.execute("""
         CREATE TABLE IF NOT EXISTS activity_polylines (
-        activity_id BIGINT,
-        polyline_highres TEXT NOT NULL
+        activity_id BIGINT PRIMARY KEY REFERENCES activities(id) ON DELETE CASCADE,
+        polyline_highres TEXT NOT NULL,
+        fetched_at TIMESTAMPTZ DEFAULT now()
         );
     """)
 
-    print("✅ Table activities created")
-
-def update_activities(token, time):
-    all_activities = []
-    page = 1
-    per_page = 200  # Max per Strava API
-
-    while True:
-        print(f"📄 {page}")
-        url = f"https://www.strava.com/api/v3/athlete/activities?page={page}&per_page={per_page}&after={time}"
-        headers = {
-            "Authorization": f"Bearer {token}"
-        }
-
-        response = requests.get(url, headers=headers)
-
-        if response.status_code != 200:
-            print(f"❌ Failed to fetch page {page}: {response.status_code} - {response.text}")
-            print(response.headers)
-            break
-
-        activities = response.json()
-
-        if not activities:
-            break  # No more data
-
-        all_activities.extend(activities)
-        page += 1
-    return all_activities
+    print("✅ Tables ensured")
 
 
-def get_new_activities(bearer_token, connection):
-    cur = connection.cursor()
-    url = f"https://www.strava.com/api/v3/athlete/activities?page=1&per_page=1"
-    headers = {
-        "Authorization": f"Bearer {bearer_token}"
-    }
-
-    response = requests.get(url, headers=headers)
-
-    if response.status_code != 200:
-        print(f"❌ Failed to fetch page: {response.status_code} - {response.text}")
-        print(response.headers)
-        return False
-        
-    id = response.json()[0]["id"]
-
-    cur.execute("""
-        SELECT id, time FROM activities ORDER BY ID DESC LIMIT 1;
-    """)
-        
-    activity_db = cur.fetchall()
-
-    activities = []
-    if len(activity_db) == 0:
-        activities = update_activities(bearer_token, 0)
-    elif activity_db[0][0] < id:
-        time = activity_db[0][1].timestamp()
-        activities = update_activities(bearer_token, time)
-    
-    insert_activities_to_db(activities, connection)
-
-def insert_activities_to_db(activities, connection):
+def insert_activities(connection, activities):
     with connection.cursor() as cur:
         for activity in activities:
             try:
+                start_time = datetime.fromisoformat(activity['start_date_local'].replace("Z", "+00:00"))
                 value = [
-                    datetime.fromisoformat(activity['start_date_local'].replace("Z", "+00:00")),
+                    start_time,
                     activity['id'],
                     activity['type'],
-                    activity['map'].get('summary_polyline', 0),
+                    activity['map'].get('summary_polyline', None),
                     activity['distance'],
                     activity['moving_time'],
                     activity['average_speed'] * 3.6,
@@ -221,7 +159,7 @@ def insert_activities_to_db(activities, connection):
                     activity.get('max_watts', 0),
                     activity.get('average_watts', 0),
                     activity.get('weighted_average_watts', 0),
-                    datetime.fromisoformat(activity['start_date_local'].replace("Z", "+00:00")).year,
+                    start_time.year,
                     json.dumps(activity)
                 ]
 
@@ -233,6 +171,7 @@ def insert_activities_to_db(activities, connection):
                         max_watts, average_watts, weighted_average_watts, year, raw_data
                     )
                     VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                    ON CONFLICT (id) DO NOTHING
                     """,
                     value
                 )
@@ -242,24 +181,83 @@ def insert_activities_to_db(activities, connection):
     connection.commit()
     print(f"✅ {len(activities)} activities written to database.")
 
-# Has to be done as a batch job to not stress api limits
-def get_high_res_polyline(bearer_token, id):
-    url = f"https://www.strava.com/api/v3/activities/{id}"
-    headers = {
-        "Authorization": f"Bearer {bearer_token}"
-    }
 
-    response = requests.get(url, headers=headers)
+def insert_highres_polylines(connection, token):
+    with connection.cursor() as cur:
+        cur.execute("""
+            SELECT a.id
+            FROM activities a
+            LEFT JOIN activity_polylines p ON a.id = p.activity_id
+            WHERE p.activity_id IS NULL
+              AND a.polyline IS NOT NULL
+            ORDER BY a.time DESC
+        """)
+        missing_ids = [row[0] for row in cur.fetchall()]
 
-    if response.status_code != 200:
-        print(f"❌ Failed to fetch page {id}: {response.status_code} - {response.text}")
+    if not missing_ids:
+        print("✅ All polylines already fetched.")
+        return
+
+    remaining_15min, remaining_day = fetch_rate_limits(token)
+    max_allowed = min(remaining_15min, remaining_day, len(missing_ids))
+
+    if max_allowed <= 0:
+        print("⏳ No quota left for polylines")
+        return
+
+    with connection.cursor() as cur:
+        for activity_id in missing_ids[:max_allowed]:
+            polyline_hr = fetch_activity_detail(activity_id, token)
+            if not polyline_hr:
+                print(f"⚠️ No polyline for {activity_id}")
+                continue
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO activity_polylines (activity_id, polyline_highres, fetched_at)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (activity_id) DO NOTHING
+                    """,
+                    (activity_id, polyline_hr, datetime.utcnow())
+                )
+                print(f"✅ Inserted high-res polyline for {activity_id}")
+            except Exception as e:
+                print(f"❌ Error inserting polyline for {activity_id}: {e}")
+                return
+
+    connection.commit()
+    print("🏁 Done updating high-res polylines.")
 
 
+def update_new_activities(token, connection):
+    cur = connection.cursor()
+    latest_id = fetch_latest_activity_id(token)
+    if not latest_id:
+        return
 
+    cur.execute("""
+        SELECT id, time FROM activities ORDER BY id DESC LIMIT 1;
+    """)
+    activity_db = cur.fetchall()
+
+    activities = []
+    if len(activity_db) == 0:
+        activities = fetch_activities(token, after=0)
+    elif activity_db[0][0] < latest_id:
+        after = int(activity_db[0][1].timestamp())
+        activities = fetch_activities(token, after=after)
+
+    insert_activities(connection, activities)
+
+
+# ------------------------------
+# File helpers
+# ------------------------------
 def write_activities_to_file(activities, filename="assets/activities.json"):
     with open(filename, "w") as f:
         json.dump(activities, f, indent=2)
     print(f"✅ Saved {len(activities)} activities to '{filename}'")
+
 
 def read_json_file(filename):
     try:
@@ -273,19 +271,28 @@ def read_json_file(filename):
     except json.JSONDecodeError as e:
         print(f"❌ Error parsing JSON: {e}")
         return []
-        
-def get_token(config):
-    url = f"https://www.strava.com/api/v3/oauth/token"
-    form_data = {
-            "client_id": config.get('STRAVA', 'CLIENT_ID'),
-            "client_secret": config.get('STRAVA', 'CLIENT_SECRET'),
-            "grant_type": "refresh_token",
-            "refresh_token": config.get('STRAVA', 'REFRESH_TOKEN')
-    }
 
-    response = requests.post(url, data=form_data)
+
+# ------------------------------
+# Token helpers
+# ------------------------------
+def fetch_token(config):
+    url = "https://www.strava.com/api/v3/oauth/token"
+    form_data = {
+        "client_id": config.get('STRAVA', 'CLIENT_ID'),
+        "client_secret": config.get('STRAVA', 'CLIENT_SECRET'),
+        "grant_type": "refresh_token",
+        "refresh_token": config.get('STRAVA', 'REFRESH_TOKEN')
+    }
+    response = strava_request(url, token=None, method="POST", data=form_data)
+    if response is None:
+        return None
     return response.json().get("access_token")
 
+
+# ------------------------------
+# Geospatial helpers
+# ------------------------------
 def municipality_intersection(connection, municipalities):
     cur = connection.cursor()
     cur.execute("""
@@ -298,89 +305,71 @@ def municipality_intersection(connection, municipalities):
     polylines = cur.fetchall()
     municipalities_intersections = set()
 
-    # Load once
     geo_df = gpd.GeoDataFrame.from_features(municipalities["features"])
-    sindex = geo_df.sindex  # spatial index
+    sindex = geo_df.sindex
 
     for line in polylines:
-        decoded_coords = polyline.decode(line[0])  # (lat, lon)
-
+        decoded_coords = polyline.decode(line[0])
         for lat, lon in decoded_coords:
             point = Point(lon, lat)
-
-            # Use spatial index for candidates (fast bounding box check)
             candidate_idx = list(sindex.intersection(point.bounds))
             if not candidate_idx:
                 continue
-
-            # Now check actual geometry containment only on candidates
             intersections = geo_df.iloc[candidate_idx][geo_df.iloc[candidate_idx].geometry.contains(point)]
-
             municipalities_intersections.update(intersections["NAME"].tolist())
 
     return municipalities_intersections
+
 
 def append_geojson(intersected_municipalities, municipalities):
     new_features = []
     for municipality in municipalities["features"]:
         if municipality["properties"]["NAME"] in intersected_municipalities:
             municipality["properties"]["visited"] = 1
-            new_features.append(municipality)
         else:
             municipality["properties"]["visited"] = 0
-            new_features.append(municipality)
-    
-    updated = {
-        "type": "FeatureCollection",
-        "features": new_features
-    }
+        new_features.append(municipality)
+
+    updated = {"type": "FeatureCollection", "features": new_features}
     with open("assets/municipality-merged-updated.json", "w") as f:
         json.dump(updated, f, indent=4)
+
 
 def get_municipalities():
     chMun = read_json_file("assets/municipality-ch.json")
     nlMun = read_json_file("assets/municipality-nl.json")
-    merged = {
-        "type": "FeatureCollection",
-        "features": chMun["features"] + nlMun["features"]
-    }
+    merged = {"type": "FeatureCollection", "features": chMun["features"] + nlMun["features"]}
     return merged
 
+
+# ------------------------------
+# Main
+# ------------------------------
 def main():
     config = configparser.ConfigParser()
     config.read('config.ini')
     try:
         connection = get_connection(config)
         print("✅ Connected to PostgreSQL!")
-
-        cur = connection.cursor()
-        
-        # Example query: Get all table names
-        cur.execute("""
-            SELECT table_name FROM information_schema.tables
-            WHERE table_schema = 'public'
-        """)
-        
-        tables = cur.fetchall()
-        # if not tables:
         setup_database(connection)
-
     except Exception as e:
         print("❌ Error connecting to PostgreSQL:", e)
-    
-    bearer_token = get_token(config)
-    get_new_activities(bearer_token, connection)
+        return
 
-    insert_highres_polylines(bearer_token, connection)
+    token = fetch_token(config)
+    if not token:
+        print("❌ Could not fetch token")
+        return
+
+    update_new_activities(token, connection)
+    insert_highres_polylines(connection, token)
 
     municipalities = get_municipalities()
-    intersected_municipalities = municipality_intersection(connection, municipalities)
-    append_geojson(intersected_municipalities, municipalities)
+    intersected = municipality_intersection(connection, municipalities)
+    append_geojson(intersected, municipalities)
 
-    # print(activities)
-    # cur.close()
-    # connection.close()
     print("🔒 Connection closed.")
+
 
 if __name__ == "__main__":
     main()
