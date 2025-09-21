@@ -15,7 +15,7 @@ info.onAdd = function (map) {
 };
 info.update = function (props) {
     const contents = props ? `<b>${props.NAME}</b><br />${props.EINWOHNERZ} people` : 'Hover over a municipality';
-    this._div.innerHTML = `<h4>US Population Density</h4>${contents}`;
+    this._div.innerHTML = `<h4>Municipality Hunter</h4>${contents}`;
 };
 
 info.addTo(map);
