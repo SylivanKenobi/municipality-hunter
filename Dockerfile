@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.11-slim AS build
 
 # Avoid bytecode and enable unbuffered output
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -12,14 +12,20 @@ COPY requirements.txt .
 
 # Install dependencies without cache
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt --target=/app/bin
 
+FROM python:3.11-slim
+
+ENV PYTHONPATH=/app/bin
+
+WORKDIR /app
+
+COPY --chown=65534:0 --from=build /app .
 # Copy app code
-COPY . .
+COPY --chown=65534:0 assets assets
+COPY --chown=65534:0 collector.py .
 
-# Make sure the workdir is writable by any user (e.g., OpenShift’s random UID)
-RUN chmod -R g+rw /app && \
-    chgrp -R 0 /app
+USER 65534
 
 # Default command
-CMD ["python", "collector.py"]
+ENTRYPOINT ["/usr/local/bin/python", "collector.py"]
