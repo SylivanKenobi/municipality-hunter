@@ -1,8 +1,8 @@
 - [x] fix issue where gps errors count as riding
 - [ ] Count how many municipalites per canton if all have been ridden change color of whole canton
 - [x] Download high res polylines
-- [ ] Add municipality stats to database
-- [ ] Test if geojson with data can be stored in database
+- [ ] Add municipality stats to database -> example code in utils.py
+- [ ] Test if geojson with data can be stored in database -> example code in utils.py
 - [ ] create pipeline for geojson files
 - [ ] create deployment
 - [ ] filter map for activity type
