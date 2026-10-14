@@ -209,8 +209,6 @@ python -m municipality_hunter init        # reloads because the release changed
 ## Known limitations
 
 - Deleted or edited activities on Strava aren't picked up for anything older than one day before the newest activity.
-- Grafana's `$type` filter uses the coarse Strava `activity_type`; the map uses `sport_type`.
-- The "Segments" panel in the Grafana dashboard queries a `segments` table that doesn't exist.
 
 ## TODO
 
