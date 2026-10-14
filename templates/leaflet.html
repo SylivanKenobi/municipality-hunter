@@ -1,25 +1,39 @@
+<!doctype html>
 <html>
   <head>
-    <title>Mapping my activities</title>
-  </head>
-
-  <body> 
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Municipality Hunter</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
      crossorigin=""/>
+    <style>
+      html, body, #map { height: 100%; margin: 0; }
+      .info { padding: 6px 8px; font: 14px/1.4 sans-serif; background: rgba(255, 255, 255, 0.9);
+              box-shadow: 0 0 15px rgba(0, 0, 0, 0.2); border-radius: 5px; }
+      .info h4 { margin: 0 0 5px; }
+      .types label { display: block; }
+      .strava-connect { display: inline-block; padding: 6px 12px; border-radius: 4px; background: #fc5200;
+                        color: white !important; font-weight: bold; text-decoration: none; }
+      .strava-connect:hover { background: #e34a00; }
+      .stats details { margin-top: 4px; }
+      .stats summary { cursor: pointer; font-weight: bold; }
+      .stats .cantons { max-height: 40vh; overflow-y: auto; }
+      .stats table { border-collapse: collapse; }
+      .stats tr { cursor: pointer; }
+      .stats tr:hover { background: rgba(0, 0, 0, 0.06); }
+      .stats td { padding: 1px 4px; }
+      .stats td.count { text-align: right; white-space: nowrap; }
+      .stats tr.complete { color: #9a6b00; font-weight: bold; }
+      .strava-error { color: #b00020; margin-bottom: 6px; max-width: 260px; }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
      crossorigin=""></script>
-    <script type="text/javascript" src="https://rawgit.com/jieter/Leaflet.encoded/master/Polyline.encoded.js"></script>
-    <div id="map" style="width: 100%; height: 100%"></div>
-    <script src="https://unpkg.com/topojson-client@3"></script>
-    <script>
-      var encodedRoutes = {{ activities|safe }}
-      var municipalities = {{ municipalities|safe }}
-    </script>
-    <script
-        src="{{ url_for('static', filename='js/map.js') }}"
-        type="module"
-    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/polyline-encoded@0.0.9/Polyline.encoded.js"></script>
+    <script src="{{ url_for('static', filename='js/map.js') }}" type="module"></script>
   </body>
 </html>

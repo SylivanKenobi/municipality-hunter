@@ -1,9 +1,5 @@
-FROM grafana/grafana:latest
+FROM grafana/grafana:12.0.1
 
 COPY assets/dashboards.yaml /etc/grafana/provisioning/dashboards/
 COPY assets/datasources.yaml /etc/grafana/provisioning/datasources/
-COPY assets/*.json /var/lib/grafana/dashboards/
-
-ENV GF_INSTALL_PLUGINS="grafana-clock-panel"
-
-USER 1001
+COPY assets/total-dashboard.json /var/lib/grafana/dashboards/

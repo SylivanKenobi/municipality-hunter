@@ -1,31 +1,67 @@
-version: '3'
+x-app: &app
+  build: .
+  env_file: .env
+  environment:
+    DB_HOST: db
+    DB_PORT: 5432
 
 services:
+  db:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_DB: ${DB_NAME}
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      retries: 20
+
+  # creates the schema and loads the municipality boundaries, then exits
+  init:
+    <<: *app
+    command: ["python", "-m", "municipality_hunter", "init"]
+    depends_on:
+      db:
+        condition: service_healthy
+
+  collector:
+    <<: *app
+    command: ["python", "-m", "municipality_hunter", "sync", "--loop"]
+    restart: unless-stopped
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  web:
+    <<: *app
+    command: ["gunicorn", "--bind", "0.0.0.0:5001", "--workers", "2", "municipality_hunter.web:app"]
+    restart: unless-stopped
+    ports:
+      - "5001:5001"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
   grafana:
     build:
       context: .
       dockerfile: grafana.Dockerfile
-    container_name: grafana
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
-      GF_PANELS_DISABLE_SANITIZE_HTML: 'true'
-      GF_SECURITY_ADMIN_PASSWORD: password
-      POSTGRES_PASSWORD: your_password
-      POSTGRES_USERNAME: postgres
-    user: "472"
-    links:
-      - postgres
-  postgres:
-    image: timescale/timescaledb:latest-pg17
-    environment:
-      POSTGRES_PASSWORD: your_password
-    ports:
-      - 5432:5432
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+    depends_on:
+      db:
+        condition: service_healthy
 
-  # strava:
-  #   image: strava:local
-  #   build:
-  #     context: .
-  #   links:
-  #     - postgres
+volumes:
+  db-data:
