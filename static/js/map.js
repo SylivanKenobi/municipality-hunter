@@ -6,8 +6,11 @@ L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 const COUNTRY_NAMES = { CH: 'Switzerland', NL: 'Netherlands' };
+const COLORS = { unvisited: '#058dfc', visited: '#0511fc', cantonComplete: '#f2a900' };
 
 let visits = {};
+// canton name -> { visited, total }, for the selected activity types
+let cantons = {};
 let boundaryFeatures = [];
 let selectedTypes = [];
 
@@ -45,31 +48,74 @@ info.update = function (feature) {
     lines.push(visit
         ? `Visited ${visit.visits}×, first on ${visit.first_visit}`
         : 'Not visited yet');
+    const canton = cantons[props.canton];
+    if (canton) {
+        lines.push(`Canton ${escapeHtml(props.canton)}: ${canton.visited} / ${canton.total}`
+            + (isComplete(canton) ? ' – complete!' : ''));
+    }
     this._div.innerHTML = `<h4>Municipality Hunter</h4>${lines.join('<br />')}`;
 };
 
 info.addTo(map);
 
-// visited / total per country
+function countVisited(features, key) {
+    const totals = {};
+    for (const feature of features) {
+        const group = key(feature);
+        if (!group) {
+            continue;
+        }
+        totals[group] ??= { visited: 0, total: 0 };
+        totals[group].total += 1;
+        if (visits[feature.id]) {
+            totals[group].visited += 1;
+        }
+    }
+    return totals;
+}
+
+function isComplete(counts) {
+    return counts.visited === counts.total;
+}
+
+// visited / total per country, and a list of the Swiss cantons
 const stats = L.control({ position: 'bottomleft' });
+let cantonListOpen = false;
 
 stats.onAdd = function () {
-    this._div = L.DomUtil.create('div', 'info');
+    this._div = L.DomUtil.create('div', 'info stats');
+    L.DomEvent.disableClickPropagation(this._div);
+    L.DomEvent.disableScrollPropagation(this._div);
+    this._div.addEventListener('toggle', e => { cantonListOpen = e.target.open; }, true);
+    this._div.addEventListener('click', e => {
+        const row = e.target.closest('[data-canton]');
+        if (row) {
+            zoomToCanton(row.dataset.canton);
+        }
+    });
     return this._div;
 };
 stats.update = function (features) {
-    const totals = {};
-    for (const feature of features) {
-        const country = feature.properties.country;
-        totals[country] ??= { visited: 0, total: 0 };
-        totals[country].total += 1;
-        if (visits[feature.id]) {
-            totals[country].visited += 1;
-        }
+    const countries = countVisited(features, f => f.properties.country);
+    const lines = Object.entries(countries)
+        .map(([country, t]) => `<b>${COUNTRY_NAMES[country] ?? country}</b>: ${t.visited} / ${t.total}`);
+
+    // most visited share first
+    const rows = Object.entries(cantons)
+        .sort(([a, x], [b, y]) => y.visited / y.total - x.visited / x.total || a.localeCompare(b))
+        .map(([name, t]) => `
+            <tr data-canton="${escapeHtml(name)}" class="${isComplete(t) ? 'complete' : ''}">
+                <td>${isComplete(t) ? '✓ ' : ''}${escapeHtml(name)}</td>
+                <td class="count">${t.visited} / ${t.total}</td>
+            </tr>`);
+    const complete = Object.values(cantons).filter(isComplete).length;
+    if (rows.length) {
+        lines.push(`<details ${cantonListOpen ? 'open' : ''}>
+            <summary>Cantons (${complete} / ${rows.length} complete)</summary>
+            <div class="cantons"><table>${rows.join('')}</table></div>
+        </details>`);
     }
-    this._div.innerHTML = Object.entries(totals)
-        .map(([country, t]) => `<b>${COUNTRY_NAMES[country] ?? country}</b>: ${t.visited} / ${t.total}`)
-        .join('<br />');
+    this._div.innerHTML = lines.join('<br />');
 };
 
 stats.addTo(map);
@@ -118,19 +164,24 @@ async function showStravaStatus() {
     return status;
 }
 
-// get color depending on if the municipality has been visited
-function getColor(visited) {
-    return visited ? '#0511fc' : '#058dfc';
+// a completed canton gets its own color, otherwise visited / not visited
+function getColor(feature) {
+    const canton = cantons[feature.properties.canton];
+    if (canton && isComplete(canton)) {
+        return COLORS.cantonComplete;
+    }
+    return visits[feature.id] ? COLORS.visited : COLORS.unvisited;
 }
 
 function style(feature) {
+    const canton = cantons[feature.properties.canton];
     return {
         weight: 1,
         opacity: 1,
         color: 'white',
         dashArray: '3',
-        fillOpacity: 0.3,
-        fillColor: getColor(visits[feature.id])
+        fillOpacity: canton && isComplete(canton) ? 0.5 : 0.3,
+        fillColor: getColor(feature)
     };
 }
 
@@ -163,6 +214,18 @@ function zoomToFeature(e) {
     map.fitBounds(e.target.getBounds());
 }
 
+function zoomToCanton(name) {
+    const bounds = L.latLngBounds([]);
+    municipalities.eachLayer(layer => {
+        if (layer.feature.properties.canton === name) {
+            bounds.extend(layer.getBounds());
+        }
+    });
+    if (bounds.isValid()) {
+        map.fitBounds(bounds);
+    }
+}
+
 function onEachFeature(feature, layer) {
     layer.on({
         mouseover: highlightFeature,
@@ -192,6 +255,7 @@ async function refresh() {
         getJson(`/api/activities?${typesQuery()}`)
     ]);
     visits = newVisits;
+    cantons = countVisited(boundaryFeatures, f => f.properties.canton);
     municipalities.setStyle(style);
     stats.update(boundaryFeatures);
     drawRoutes(activities);
@@ -229,7 +293,7 @@ function addTypeFilter(types) {
 const [stravaStatus, types, boundaries] = await Promise.all([
     showStravaStatus(),
     getJson('/api/activity-types'),
-    getJson('/api/municipalities')
+    getJson('/api/municipalities?v=2')
 ]);
 if (stravaStatus.connected && types.length === 0) {
     strava.getContainer().insertAdjacentHTML('beforeend',

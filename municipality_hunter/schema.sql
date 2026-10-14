@@ -47,6 +47,23 @@ CREATE TABLE IF NOT EXISTS municipalities (
 
 CREATE INDEX IF NOT EXISTS municipalities_geom_idx ON municipalities USING GIST (geom);
 
+-- Swiss cantons by BFS number (municipalities.canton)
+CREATE TABLE IF NOT EXISTS cantons (
+    code          TEXT PRIMARY KEY,
+    abbreviation  TEXT NOT NULL,
+    name          TEXT NOT NULL
+);
+
+INSERT INTO cantons (code, abbreviation, name) VALUES
+    ('1', 'ZH', 'Zürich'), ('2', 'BE', 'Bern'), ('3', 'LU', 'Luzern'), ('4', 'UR', 'Uri'),
+    ('5', 'SZ', 'Schwyz'), ('6', 'OW', 'Obwalden'), ('7', 'NW', 'Nidwalden'), ('8', 'GL', 'Glarus'),
+    ('9', 'ZG', 'Zug'), ('10', 'FR', 'Fribourg'), ('11', 'SO', 'Solothurn'), ('12', 'BS', 'Basel-Stadt'),
+    ('13', 'BL', 'Basel-Landschaft'), ('14', 'SH', 'Schaffhausen'), ('15', 'AR', 'Appenzell Ausserrhoden'),
+    ('16', 'AI', 'Appenzell Innerrhoden'), ('17', 'SG', 'St. Gallen'), ('18', 'GR', 'Graubünden'),
+    ('19', 'AG', 'Aargau'), ('20', 'TG', 'Thurgau'), ('21', 'TI', 'Ticino'), ('22', 'VD', 'Vaud'),
+    ('23', 'VS', 'Valais'), ('24', 'NE', 'Neuchâtel'), ('25', 'GE', 'Genève'), ('26', 'JU', 'Jura')
+ON CONFLICT (code) DO UPDATE SET abbreviation = EXCLUDED.abbreviation, name = EXCLUDED.name;
+
 -- municipalities cut into small pieces, which makes ST_Intersects much faster
 CREATE TABLE IF NOT EXISTS municipality_parts (
     municipality_id  INTEGER NOT NULL REFERENCES municipalities (id) ON DELETE CASCADE,

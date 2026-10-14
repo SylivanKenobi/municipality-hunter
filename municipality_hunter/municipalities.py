@@ -12,8 +12,9 @@ def swiss_municipalities(path=ASSETS_DIR / "municipality-ch.json"):
         features = json.load(f)["features"]
     for feature in features:
         props = feature["properties"]
-        # the file also contains Liechtenstein and shared areas (Kommunanz)
-        if props["OBJEKTART"] != "Gemeindegebiet":
+        # the file also contains Liechtenstein, the German and Italian
+        # exclaves (Büsingen, Campione) and shared areas (Kommunanz)
+        if props["OBJEKTART"] != "Gemeindegebiet" or props["ICC"] != "CH":
             continue
         yield {
             "country": "CH",
@@ -43,13 +44,16 @@ def dutch_municipalities(path=ASSETS_DIR / "municipality-nl.json"):
 SOURCES = (swiss_municipalities, dutch_municipalities)
 # releases of the files above, written by ci/update-municipalities.sh
 SOURCE_VERSIONS = ASSETS_DIR / "municipality-sources.json"
+# bump when the loader changes what it stores, so `init` reloads existing databases
+LOADER_VERSION = 2
 
 
 def source_versions():
     try:
-        return json.dumps(json.loads(SOURCE_VERSIONS.read_text()), sort_keys=True)
+        files = json.loads(SOURCE_VERSIONS.read_text())
     except FileNotFoundError:
-        return ""
+        files = {}
+    return json.dumps({"files": files, "loader": LOADER_VERSION}, sort_keys=True)
 
 
 UPSERT_MUNICIPALITY_SQL = """

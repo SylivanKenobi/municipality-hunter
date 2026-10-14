@@ -114,14 +114,15 @@ def municipalities():
             'type', 'FeatureCollection',
             'features', COALESCE(json_agg(json_build_object(
                 'type', 'Feature',
-                'id', id,
-                'geometry', ST_AsGeoJSON(geom_simplified, 5)::json,
+                'id', m.id,
+                'geometry', ST_AsGeoJSON(m.geom_simplified, 5)::json,
                 'properties', json_build_object(
-                    'name', name, 'country', country, 'code', code,
-                    'canton', canton, 'population', population)
+                    'name', m.name, 'country', m.country, 'code', m.code,
+                    'canton', c.name, 'population', m.population)
             )), '[]'::json)
         )::text
-        FROM municipalities
+        FROM municipalities m
+        LEFT JOIN cantons c ON c.code = m.canton
     """)
     response = Response(geojson, mimetype="application/geo+json")
     response.cache_control.max_age = 3600

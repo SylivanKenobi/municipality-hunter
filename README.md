@@ -30,6 +30,10 @@ The work is incremental. Only activities with `processed_at IS NULL` are process
 
 All activity types are stored and intersected. The map filters by `sport_type` and starts with outdoor rides selected (everything ending in `Ride` except `VirtualRide`).
 
+### Cantons
+
+The panel at the bottom left shows visited / total per country, plus a **Cantons** list with visited / total for each Swiss canton, sorted by share visited. Click a canton to zoom to it. Hovering a municipality also shows its canton's progress. Once every municipality of a canton is visited, the whole canton turns **gold** on the map and gets a ✓ in the list. The counts follow the activity-type filter, so a canton can be complete for rides but not for runs.
+
 ### Strava quota
 
 Strava limits how many requests an API application may make per 15 minutes and per day; the current limits are shown on your [API settings page](https://www.strava.com/settings/api). The client reads the remaining quota from the `X-ReadRateLimit-*` headers on every response and stops cleanly when it runs out or gets a 429. The next run continues from there. A first sync of ~1300 activities needs about 7 list requests plus one detail request per activity for the high-res polylines, so the backfill takes a day or two. The map works from the start with the summary polylines.
@@ -144,7 +148,7 @@ The web app has **no login**. It assumes it runs locally and only you can reach 
 | `GET /auth/strava/callback` | Strava redirects back here; stores the token and requests a sync |
 | `GET /api/strava` | `{configured, connected, athlete}` |
 | `GET /api/activity-types` | `[{sport_type, count}]` |
-| `GET /api/municipalities` | GeoJSON of all municipalities, simplified to ~30 m (~4 MB, cached for 1 h) |
+| `GET /api/municipalities` | GeoJSON of all municipalities with `name`, `country`, `code`, `canton` (name, CH only) and `population`, simplified to ~30 m (~4 MB, cached for 1 h) |
 | `GET /api/visits?types=Ride,GravelRide` | `{municipality_id: {visits, first_visit}}` |
 | `GET /api/activities?types=Ride` | `[{id, name, sport_type, date, polyline}]`, polylines simplified to ~5 m |
 
@@ -156,6 +160,7 @@ Leave out `types` to get all activity types. Send `types=` (empty) to get none.
 |---|---|
 | `activities` | one row per Strava activity (PK `id`): stats used by Grafana, `sport_type`, `polyline`, `polyline_highres`, full `raw_data` JSON, `route` geometry, `processed_at` |
 | `municipalities` | `country`, `code` (`BFS_NUMMER` / CBS `statcode`), `name`, `canton` (CH), `population` (CH), `geom`, `geom_simplified` |
+| `cantons` | the 26 Swiss cantons by BFS number (`code`, `abbreviation`, `name`), filled by `schema.sql` |
 | `municipality_parts` | subdivided boundaries used for the intersection |
 | `activity_municipalities` | which activity visited which municipality |
 | `app_state` | key/value: Strava refresh token, connected athlete name, pending OAuth `state`, `sync_requested` flag |
@@ -166,7 +171,7 @@ Leave out `types` to get all activity types. Send `types=` (empty) to get none.
 
 | Country | File | Source |
 |---|---|---|
-| CH | `assets/municipality-ch.json`. Layer `HOHEITSGEBIET`; besides the municipalities it contains Liechtenstein and two shared areas, which the loader skips. | swisstopo [swissBOUNDARIES3D](https://www.swisstopo.admin.ch/en/landscape-model-swissboundaries3d), latest release from the [STAC API](https://data.geo.admin.ch/api/stac/v1/collections/ch.swisstopo.swissboundaries3d/items), reprojected from LV95 to WGS84 |
+| CH | `assets/municipality-ch.json`. Layer `HOHEITSGEBIET`; besides the Swiss municipalities it contains the municipalities of Liechtenstein, the German and Italian exclaves Büsingen and Campione, and shared areas. The loader skips all of these. | swisstopo [swissBOUNDARIES3D](https://www.swisstopo.admin.ch/en/landscape-model-swissboundaries3d), latest release from the [STAC API](https://data.geo.admin.ch/api/stac/v1/collections/ch.swisstopo.swissboundaries3d/items), reprojected from LV95 to WGS84 |
 | NL | `assets/municipality-nl.json`. `statnaam` is renamed to `NAME`. | CBS gebiedsindelingen via PDOK WFS, layer `gemeente_gegeneraliseerd` of the newest year |
 
 `assets/municipality-sources.json` records which release is in the repository, e.g. `{"ch": "swissboundaries3d_2026-01", "nl": "2026"}`.
@@ -217,7 +222,7 @@ python -m municipality_hunter init        # reloads because the release changed
 - [x] Add municipality stats to database
 - [x] Store municipality geometries in the database (PostGIS)
 - [x] filter map for activity type
-- [ ] Count how many municipalities per canton; if all have been ridden, change color of whole canton
+- [x] Count how many municipalities per canton; if all have been ridden, change color of whole canton
 - [x] create pipeline for geojson files
 - [ ] create deployment
 - [ ] Belgium
