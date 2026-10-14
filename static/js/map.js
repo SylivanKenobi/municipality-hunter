@@ -200,6 +200,18 @@ function highlightFeature(e) {
     info.update(layer.feature);
 }
 
+// canton outlines above the municipalities but below the routes;
+// the pane ignores the mouse so hovering municipalities still works
+map.createPane('cantons').style.zIndex = 450;
+map.getPane('cantons').style.pointerEvents = 'none';
+map.createPane('routes').style.zIndex = 460;
+
+const cantonOutlines = L.geoJson(null, {
+    pane: 'cantons',
+    interactive: false,
+    style: { color: '#333', weight: 2, opacity: 0.8, fill: false }
+}).addTo(map);
+
 const municipalities = L.geoJson(null, {
     style,
     onEachFeature
@@ -240,6 +252,7 @@ function drawRoutes(activities) {
     routes.clearLayers();
     for (const activity of activities) {
         L.Polyline.fromEncoded(activity.polyline, {
+            pane: 'routes',
             color: 'red',
             weight: 2,
             opacity: 1,
@@ -290,10 +303,11 @@ function addTypeFilter(types) {
     filter.addTo(map);
 }
 
-const [stravaStatus, types, boundaries] = await Promise.all([
+const [stravaStatus, types, boundaries, cantonBoundaries] = await Promise.all([
     showStravaStatus(),
     getJson('/api/activity-types'),
-    getJson('/api/municipalities?v=2')
+    getJson('/api/municipalities?v=2'),
+    getJson('/api/cantons')
 ]);
 if (stravaStatus.connected && types.length === 0) {
     strava.getContainer().insertAdjacentHTML('beforeend',
@@ -302,4 +316,5 @@ if (stravaStatus.connected && types.length === 0) {
 addTypeFilter(types);
 boundaryFeatures = boundaries.features;
 municipalities.addData(boundaries);
+cantonOutlines.addData(cantonBoundaries);
 await refresh();

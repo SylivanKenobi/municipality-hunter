@@ -45,7 +45,7 @@ SOURCES = (swiss_municipalities, dutch_municipalities)
 # releases of the files above, written by ci/update-municipalities.sh
 SOURCE_VERSIONS = ASSETS_DIR / "municipality-sources.json"
 # bump when the loader changes what it stores, so `init` reloads existing databases
-LOADER_VERSION = 2
+LOADER_VERSION = 3
 
 
 def source_versions():
@@ -72,6 +72,16 @@ UPSERT_MUNICIPALITY_SQL = """
         geom = EXCLUDED.geom,
         geom_simplified = EXCLUDED.geom_simplified
     RETURNING id
+"""
+
+UPDATE_CANTON_BOUNDARIES_SQL = """
+    DELETE FROM canton_boundaries;
+    INSERT INTO canton_boundaries (canton, geom)
+    SELECT canton, ST_Multi(ST_CollectionExtract(ST_MakeValid(
+        ST_SimplifyPreserveTopology(ST_Union(geom), 0.0003)), 3))
+    FROM municipalities
+    WHERE canton IS NOT NULL
+    GROUP BY canton
 """
 
 
@@ -104,5 +114,6 @@ def load_municipalities(conn, sources=SOURCES):
                 if cur.rowcount:
                     log.info("Removed %d municipalities from %s that no longer exist", cur.rowcount, country)
             log.info("Loaded %d municipalities from %s", count, source.__name__)
+        cur.execute(UPDATE_CANTON_BOUNDARIES_SQL)
         cur.execute("UPDATE activities SET processed_at = NULL")
     conn.commit()

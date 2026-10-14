@@ -129,6 +129,25 @@ def municipalities():
     return response
 
 
+@app.route("/api/cantons")
+def canton_boundaries():
+    [(geojson,)] = query("""
+        SELECT json_build_object(
+            'type', 'FeatureCollection',
+            'features', COALESCE(json_agg(json_build_object(
+                'type', 'Feature',
+                'geometry', ST_AsGeoJSON(ST_Boundary(b.geom), 5)::json,
+                'properties', json_build_object('name', c.name, 'abbreviation', c.abbreviation)
+            )), '[]'::json)
+        )::text
+        FROM canton_boundaries b
+        JOIN cantons c ON c.code = b.canton
+    """)
+    response = Response(geojson, mimetype="application/geo+json")
+    response.cache_control.max_age = 3600
+    return response
+
+
 @app.route("/api/visits")
 def visits():
     rows = query("""

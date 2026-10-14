@@ -39,3 +39,24 @@ def test_api_returns_canton_names(conn, monkeypatch):
     assert sorted((f["properties"]["name"], f["properties"]["canton"]) for f in features) == [
         ("Basel", "Basel-Stadt"), ("Riehen", "Basel-Stadt"), ("Zürich", "Zürich"),
     ]
+
+
+def test_canton_outline_is_merged_from_its_municipalities(conn):
+    def source():
+        # two neighbouring squares in Basel-Stadt, one in Zürich
+        for name, bfs, canton, lon in (("Basel", 2701, 12, 8.0), ("Riehen", 2703, 12, 8.01), ("Zürich", 261, 1, 9.0)):
+            yield {"country": "CH", "code": str(bfs), "name": name, "canton": str(canton), "population": 100,
+                   "geometry": {"type": "Polygon", "coordinates": [[
+                       [lon, 47], [lon + 0.01, 47], [lon + 0.01, 47.01], [lon, 47.01], [lon, 47]]]}}
+
+    load_municipalities(conn, sources=(source,))
+    features = web.app.test_client().get("/api/cantons").get_json()["features"]
+
+    outlines = {f["properties"]["name"]: f["geometry"] for f in features}
+    assert sorted(outlines) == ["Basel-Stadt", "Zürich"]
+    # the shared border between Basel and Riehen is gone: one closed ring around both
+    basel_stadt = outlines["Basel-Stadt"]
+    rings = basel_stadt["coordinates"] if basel_stadt["type"] == "MultiLineString" else [basel_stadt["coordinates"]]
+    assert len(rings) == 1
+    lons = {round(lon, 5) for lon, lat in rings[0]}
+    assert lons == {8.0, 8.02}

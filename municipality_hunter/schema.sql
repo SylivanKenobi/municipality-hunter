@@ -64,6 +64,12 @@ INSERT INTO cantons (code, abbreviation, name) VALUES
     ('23', 'VS', 'Valais'), ('24', 'NE', 'Neuchâtel'), ('25', 'GE', 'Genève'), ('26', 'JU', 'Jura')
 ON CONFLICT (code) DO UPDATE SET abbreviation = EXCLUDED.abbreviation, name = EXCLUDED.name;
 
+-- canton outlines for the map, merged from their municipalities on load
+CREATE TABLE IF NOT EXISTS canton_boundaries (
+    canton  TEXT PRIMARY KEY REFERENCES cantons (code),
+    geom    geometry(MultiPolygon, 4326) NOT NULL
+);
+
 -- municipalities cut into small pieces, which makes ST_Intersects much faster
 CREATE TABLE IF NOT EXISTS municipality_parts (
     municipality_id  INTEGER NOT NULL REFERENCES municipalities (id) ON DELETE CASCADE,

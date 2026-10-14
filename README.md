@@ -32,7 +32,7 @@ All activity types are stored and intersected. The map filters by `sport_type` a
 
 ### Cantons
 
-The panel at the bottom left shows visited / total per country, plus a **Cantons** list with visited / total for each Swiss canton, sorted by share visited. Click a canton to zoom to it. Hovering a municipality also shows its canton's progress. Once every municipality of a canton is visited, the whole canton turns **gold** on the map and gets a ✓ in the list. The counts follow the activity-type filter, so a canton can be complete for rides but not for runs.
+The panel at the bottom left shows visited / total per country, plus a **Cantons** list with visited / total for each Swiss canton, sorted by share visited. Click a canton to zoom to it. Each canton has a fixed dark outline on the map, drawn above the municipalities and below the routes. Hovering a municipality also shows its canton's progress. Once every municipality of a canton is visited, the whole canton turns **gold** on the map and gets a ✓ in the list. The counts follow the activity-type filter, so a canton can be complete for rides but not for runs.
 
 ### Strava quota
 
@@ -149,6 +149,7 @@ The web app has **no login**. It assumes it runs locally and only you can reach 
 | `GET /api/strava` | `{configured, connected, athlete}` |
 | `GET /api/activity-types` | `[{sport_type, count}]` |
 | `GET /api/municipalities` | GeoJSON of all municipalities with `name`, `country`, `code`, `canton` (name, CH only) and `population`, simplified to ~30 m (~4 MB, cached for 1 h) |
+| `GET /api/cantons` | GeoJSON lines of the canton outlines (cached for 1 h) |
 | `GET /api/visits?types=Ride,GravelRide` | `{municipality_id: {visits, first_visit}}` |
 | `GET /api/activities?types=Ride` | `[{id, name, sport_type, date, polyline}]`, polylines simplified to ~5 m |
 
@@ -161,6 +162,7 @@ Leave out `types` to get all activity types. Send `types=` (empty) to get none.
 | `activities` | one row per Strava activity (PK `id`): stats used by Grafana, `sport_type`, `polyline`, `polyline_highres`, full `raw_data` JSON, `route` geometry, `processed_at` |
 | `municipalities` | `country`, `code` (`BFS_NUMMER` / CBS `statcode`), `name`, `canton` (CH), `population` (CH), `geom`, `geom_simplified` |
 | `cantons` | the 26 Swiss cantons by BFS number (`code`, `abbreviation`, `name`), filled by `schema.sql` |
+| `canton_boundaries` | canton outlines, merged from their municipalities whenever the boundaries are (re)loaded |
 | `municipality_parts` | subdivided boundaries used for the intersection |
 | `activity_municipalities` | which activity visited which municipality |
 | `app_state` | key/value: Strava refresh token, connected athlete name, pending OAuth `state`, `sync_requested` flag |
