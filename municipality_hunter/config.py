@@ -14,6 +14,7 @@ class Settings:
     refresh_token: str
     sync_interval_seconds: int
     max_segment_meters: float
+    public_url: str
 
     @classmethod
     def from_env(cls):
@@ -31,4 +32,7 @@ class Settings:
             # Segments longer than this are treated as GPS jumps: only their
             # end points count towards visited municipalities.
             max_segment_meters=float(env.get("MAX_SEGMENT_METERS", "500")),
+            # base URL Strava redirects back to after "Connect with Strava";
+            # empty = the URL the map was opened with
+            public_url=env.get("PUBLIC_URL", "").rstrip("/"),
         )

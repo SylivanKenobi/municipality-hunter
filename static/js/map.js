@@ -74,6 +74,50 @@ stats.update = function (features) {
 
 stats.addTo(map);
 
+// Strava connection status / "Connect with Strava" button
+const strava = L.control({ position: 'topleft' });
+
+strava.onAdd = function () {
+    this._div = L.DomUtil.create('div', 'info strava');
+    L.DomEvent.disableClickPropagation(this._div);
+    return this._div;
+};
+strava.update = function (status, error) {
+    const button = label => `<a class="strava-connect" href="/auth/strava">${label}</a>`;
+    const parts = [];
+    if (error) {
+        parts.push(`<div class="strava-error">${escapeHtml(error)}</div>`);
+    }
+    if (!status.configured) {
+        parts.push('Set CLIENT_ID and CLIENT_SECRET in .env to connect Strava');
+    } else if (status.connected) {
+        const who = status.athlete ? ` as <b>${escapeHtml(status.athlete)}</b>` : '';
+        parts.push(`Connected to Strava${who}<br /><a href="/auth/strava">Reconnect</a>`);
+    } else {
+        parts.push(button('Connect with Strava'));
+    }
+    this._div.innerHTML = parts.join('');
+};
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function showStravaStatus() {
+    const params = new URLSearchParams(window.location.search);
+    const error = params.get('strava_error');
+    // drop ?strava_error from the address bar so a reload doesn't show it again
+    if (window.location.search) {
+        history.replaceState(null, '', window.location.pathname);
+    }
+    strava.addTo(map);
+    const status = await getJson('/api/strava');
+    strava.update(status, error);
+    return status;
+}
+
 // get color depending on if the municipality has been visited
 function getColor(visited) {
     return visited ? '#0511fc' : '#058dfc';
@@ -182,10 +226,15 @@ function addTypeFilter(types) {
     filter.addTo(map);
 }
 
-const [types, boundaries] = await Promise.all([
+const [stravaStatus, types, boundaries] = await Promise.all([
+    showStravaStatus(),
     getJson('/api/activity-types'),
     getJson('/api/municipalities')
 ]);
+if (stravaStatus.connected && types.length === 0) {
+    strava.getContainer().insertAdjacentHTML('beforeend',
+        '<br />Fetching your activities, reload in a minute');
+}
 addTypeFilter(types);
 boundaryFeatures = boundaries.features;
 municipalities.addData(boundaries);

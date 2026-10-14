@@ -3,7 +3,8 @@ import logging
 import time
 from datetime import datetime
 
-from .db import apply_schema, get_connection, get_state, set_state
+from .auth import current_refresh_token, store_refresh_token
+from .db import apply_schema, clear_state, get_connection, get_state
 from .strava import RateLimitReached, StravaClient
 
 log = logging.getLogger(__name__)
@@ -11,6 +12,8 @@ log = logging.getLogger(__name__)
 # Re-fetch one day before the newest stored activity; upserts make this safe.
 SYNC_OVERLAP_SECONDS = 24 * 3600
 INTERSECT_BATCH_SIZE = 100
+# how often the loop checks whether the web app requested a sync
+SYNC_REQUEST_POLL_SECONDS = 30
 
 UPSERT_ACTIVITY_SQL = """
     INSERT INTO activities (
@@ -171,17 +174,16 @@ def compute_visited_municipalities(conn, max_segment_meters):
 
 
 def strava_client(conn, settings):
-    # Strava may rotate the refresh token, so the latest one is kept in the
-    # database. A changed REFRESH_TOKEN in the environment takes precedence.
-    stored = get_state(conn, "strava_refresh_token")
-    stored_source = get_state(conn, "strava_refresh_token_source")
-    refresh_token = stored if stored and stored_source == settings.refresh_token else settings.refresh_token
-
+    """A logged-in Strava client, or None if Strava isn't connected yet."""
+    refresh_token = current_refresh_token(conn, settings)
+    if not refresh_token:
+        return None
     client = StravaClient(settings.client_id, settings.client_secret, refresh_token)
-    new_token = client.refresh_access_token()
-    if new_token != stored:
-        set_state(conn, "strava_refresh_token", new_token)
-        set_state(conn, "strava_refresh_token_source", settings.refresh_token)
+    try:
+        new_token = client.refresh_access_token()
+    except RuntimeError as e:
+        raise RuntimeError(f"{e} - reconnect with the 'Connect with Strava' button on the map") from e
+    store_refresh_token(conn, settings, new_token)
     return client
 
 
@@ -189,15 +191,39 @@ def run_sync(settings):
     conn = get_connection(settings)
     try:
         apply_schema(conn)
-        client = strava_client(conn, settings)
-        try:
-            sync_activities(conn, client)
-            backfill_highres_polylines(conn, client)
-        except RateLimitReached as e:
-            log.info("Stopping Strava sync: %s", e)
+        clear_state(conn, "sync_requested")
+        if not (settings.client_id and settings.client_secret):
+            log.error("CLIENT_ID and CLIENT_SECRET are not set, see README")
+        else:
+            client = strava_client(conn, settings)
+            if client is None:
+                log.info("Strava not connected yet, use 'Connect with Strava' on the map")
+            else:
+                try:
+                    sync_activities(conn, client)
+                    backfill_highres_polylines(conn, client)
+                except RateLimitReached as e:
+                    log.info("Stopping Strava sync: %s", e)
         compute_visited_municipalities(conn, settings.max_segment_meters)
     finally:
         conn.close()
+
+
+def wait_for_next_sync(settings):
+    """Sleep until the sync interval is over or a sync is requested from the web app."""
+    deadline = time.monotonic() + settings.sync_interval_seconds
+    while time.monotonic() < deadline:
+        time.sleep(min(SYNC_REQUEST_POLL_SECONDS, max(0, deadline - time.monotonic())))
+        try:
+            conn = get_connection(settings)
+            try:
+                if get_state(conn, "sync_requested"):
+                    log.info("Sync requested")
+                    return
+            finally:
+                conn.close()
+        except Exception:
+            log.exception("Could not check for sync requests")
 
 
 def run_sync_loop(settings):
@@ -207,4 +233,4 @@ def run_sync_loop(settings):
         except Exception:
             log.exception("Sync failed")
         log.info("Next sync in %d s", settings.sync_interval_seconds)
-        time.sleep(settings.sync_interval_seconds)
+        wait_for_next_sync(settings)

@@ -1,16 +1,4 @@
-"""Intersection tests against a real PostGIS database.
-
-Uses the DB_* environment variables (e.g. the compose database) and is
-skipped if no database is reachable. Runs in a throwaway schema.
-"""
-import json
-import uuid
-
-import psycopg2
-import pytest
-
-from municipality_hunter.config import Settings
-from municipality_hunter.db import apply_schema, get_connection
+"""Intersection tests against a real PostGIS database (see conftest.py)."""
 from municipality_hunter.municipalities import load_municipalities
 from municipality_hunter.sync import compute_visited_municipalities, upsert_activities
 
@@ -43,24 +31,6 @@ def activity(activity_id, coords):
         "average_speed": 5.0, "max_speed": 10.0, "total_elevation_gain": 10.0,
         "map": {"summary_polyline": encode(coords)},
     }
-
-
-@pytest.fixture
-def conn():
-    try:
-        conn = get_connection(Settings.from_env())
-    except psycopg2.OperationalError as e:
-        pytest.skip(f"no database: {e}")
-    schema = f"test_{uuid.uuid4().hex[:8]}"
-    with conn.cursor() as cur:
-        cur.execute(f"CREATE SCHEMA {schema}; SET search_path TO {schema}, public")
-    apply_schema(conn)
-    yield conn
-    conn.rollback()
-    with conn.cursor() as cur:
-        cur.execute(f"DROP SCHEMA {schema} CASCADE")
-    conn.commit()
-    conn.close()
 
 
 def visited(conn):

@@ -51,3 +51,9 @@ def set_state(conn, key, value):
             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
         """, (key, value))
     conn.commit()
+
+
+def clear_state(conn, key):
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM app_state WHERE key = %s", (key,))
+    conn.commit()

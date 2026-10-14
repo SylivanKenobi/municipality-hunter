@@ -1,9 +1,16 @@
+import logging
+import secrets
+from contextlib import closing
 from pathlib import Path
+from urllib.parse import urlencode
 
-from flask import Flask, Response, jsonify, render_template, request
+from flask import Flask, Response, jsonify, redirect, render_template, request, url_for
 
+from . import auth
 from .config import Settings
-from .db import get_connection
+from .db import clear_state, get_connection, get_state, set_state
+
+log = logging.getLogger(__name__)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -32,6 +39,62 @@ def requested_types():
 @app.route("/")
 def index():
     return render_template("leaflet.html")
+
+
+def back_to_map(error=None):
+    return redirect("/" + (f"?{urlencode({'strava_error': error})}" if error else ""))
+
+
+def callback_url():
+    path = url_for("strava_callback")
+    return f"{settings.public_url}{path}" if settings.public_url else url_for("strava_callback", _external=True)
+
+
+@app.route("/api/strava")
+def strava_status():
+    with closing(get_connection(settings)) as conn:
+        return jsonify({
+            "configured": bool(settings.client_id and settings.client_secret),
+            "connected": auth.current_refresh_token(conn, settings) is not None,
+            "athlete": get_state(conn, "strava_athlete"),
+        })
+
+
+@app.route("/auth/strava")
+def strava_connect():
+    if not (settings.client_id and settings.client_secret):
+        return back_to_map("CLIENT_ID and CLIENT_SECRET are not configured, see README")
+    # stored in the database rather than a cookie session so it works across gunicorn workers
+    state = secrets.token_urlsafe(16)
+    with closing(get_connection(settings)) as conn:
+        set_state(conn, "oauth_state", state)
+    return redirect(auth.authorize_url(settings.client_id, callback_url(), state))
+
+
+@app.route("/auth/strava/callback")
+def strava_callback():
+    with closing(get_connection(settings)) as conn:
+        expected_state = get_state(conn, "oauth_state")
+        clear_state(conn, "oauth_state")
+        if not expected_state or request.args.get("state") != expected_state:
+            return back_to_map("The Strava login expired, please try again")
+        if request.args.get("error"):
+            return back_to_map("Access was denied on Strava")
+        if auth.REQUIRED_SCOPE not in request.args.get("scope", "").split(","):
+            return back_to_map("Please allow access to your activities, including private ones")
+
+        try:
+            token = auth.exchange_code(settings.client_id, settings.client_secret, request.args.get("code", ""))
+        except Exception:
+            log.exception("Strava code exchange failed")
+            return back_to_map("Strava rejected the login, check CLIENT_ID and CLIENT_SECRET")
+
+        athlete = token.get("athlete") or {}
+        auth.store_refresh_token(conn, settings, token["refresh_token"])
+        name = " ".join(filter(None, [athlete.get("firstname"), athlete.get("lastname")]))
+        set_state(conn, "strava_athlete", name or str(athlete.get("id", "")))
+        auth.request_sync(conn)
+    return back_to_map()
 
 
 @app.route("/api/activity-types")
