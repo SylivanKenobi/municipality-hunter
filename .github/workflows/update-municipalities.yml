@@ -1,0 +1,106 @@
+name: Update municipality data
+
+# GitHub cron has no "every 30 days"; the 1st of every month is the closest.
+on:
+  schedule:
+    - cron: "23 4 1 * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Regenerate the files even if no new release exists
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-municipalities
+
+jobs:
+  update:
+    runs-on: ubuntu-24.04
+    services:
+      postgis:
+        image: postgis/postgis:17-3.5
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-retries 20
+    env:
+      DB_HOST: localhost
+      DB_NAME: postgres
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install GDAL
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q gdal-bin jq
+
+      - name: Download new releases
+        run: ci/update-municipalities.sh ${{ inputs.force && '--force' || '' }}
+
+      - name: Check for changes
+        id: changes
+        run: |
+          if [ -n "$(git status --porcelain assets/)" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "ch=$(jq -r .ch assets/municipality-sources.json)" >> "$GITHUB_OUTPUT"
+            echo "nl=$(jq -r .nl assets/municipality-sources.json)" >> "$GITHUB_OUTPUT"
+            git diff --stat assets/
+          else
+            echo "Municipality data is up to date."
+          fi
+
+      # A PR opened by this workflow doesn't trigger other workflows, so the
+      # new files are checked here: load them with the app and run the tests.
+      - uses: actions/setup-python@v5
+        if: steps.changes.outputs.changed == 'true'
+        with:
+          python-version: "3.12"
+
+      - name: Load the new data with the app
+        if: steps.changes.outputs.changed == 'true'
+        run: |
+          pip install -q -r requirements-dev.txt
+          python -m municipality_hunter init --force
+          python - <<'EOF'
+          from municipality_hunter.config import Settings
+          from municipality_hunter.db import get_connection
+
+          with get_connection(Settings.from_env()) as conn, conn.cursor() as cur:
+              cur.execute("SELECT country, count(*) FROM municipalities GROUP BY 1")
+              counts = dict(cur.fetchall())
+          print(counts)
+          assert counts.get("CH", 0) > 2000 and counts.get("NL", 0) > 300, counts
+          EOF
+          pytest -q
+
+      - name: Create or update pull request
+        if: steps.changes.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: update/municipality-data
+          delete-branch: true
+          add-paths: assets/municipality-*.json
+          commit-message: "Update municipality data (CH ${{ steps.changes.outputs.ch }}, NL ${{ steps.changes.outputs.nl }})"
+          title: "Update municipality data (CH ${{ steps.changes.outputs.ch }}, NL ${{ steps.changes.outputs.nl }})"
+          body: |
+            New municipality boundaries found by the scheduled `update-municipalities` workflow.
+
+            | Country | Release | Source |
+            |---|---|---|
+            | CH | `${{ steps.changes.outputs.ch }}` | [swissBOUNDARIES3D](https://www.swisstopo.admin.ch/en/landscape-model-swissboundaries3d) |
+            | NL | `${{ steps.changes.outputs.nl }}` | [CBS gebiedsindelingen (PDOK)](https://service.pdok.nl/cbs/gebiedsindelingen/) |
+
+            The files were loaded into PostGIS with `municipality_hunter init` and the tests passed in the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}).
+
+            After merging, restart the stack (`docker compose up -d --build`). `init` notices the new release and reloads the boundaries. Visits are recomputed on the next sync, and municipalities that merged are removed.

@@ -83,7 +83,7 @@ python -m venv venv && . venv/bin/activate
 pip install -r requirements-dev.txt
 set -a; . ./.env; set +a
 
-python -m municipality_hunter init         # schema + boundaries (--force to reload)
+python -m municipality_hunter init         # schema + boundaries (reloads after a data update)
 python -m municipality_hunter sync         # one sync run (--loop to keep going)
 python -m municipality_hunter web          # http://localhost:5001, then "Connect with Strava"
 pytest                                     # DB tests are skipped if no DB is reachable
@@ -164,12 +164,34 @@ Leave out `types` to get all activity types. Send `types=` (empty) to get none.
 
 ## Municipality boundary data
 
-| Country | File | Source | Regenerate with |
-|---|---|---|---|
-| CH | `assets/municipality-ch.json` (2128 municipalities; the file also contains Liechtenstein and two shared areas, which are skipped) | swisstopo swissBOUNDARIES3D 2025-04 | `ci/swiss-municipality.js` (adapted from [rkaravia/swiss-boundaries-geojson](https://github.com/rkaravia/swiss-boundaries-geojson)): `cd ci && npm install && node swiss-municipality.js`, then copy the municipality layer from `ci/data/geojson/2025/` to `assets/municipality-ch.json` |
-| NL | `assets/municipality-nl.json` (342) | CBS gebiedsindelingen via PDOK WFS | `cd ci && ./dutch-municipality.bash 2025` (adapted from [cartomap/nl](https://github.com/cartomap/nl)), which writes `assets/municipality-nl.json` |
+| Country | File | Source |
+|---|---|---|
+| CH | `assets/municipality-ch.json`. Layer `HOHEITSGEBIET`; besides the municipalities it contains Liechtenstein and two shared areas, which the loader skips. | swisstopo [swissBOUNDARIES3D](https://www.swisstopo.admin.ch/en/landscape-model-swissboundaries3d), latest release from the [STAC API](https://data.geo.admin.ch/api/stac/v1/collections/ch.swisstopo.swissboundaries3d/items), reprojected from LV95 to WGS84 |
+| NL | `assets/municipality-nl.json`. `statnaam` is renamed to `NAME`. | CBS gebiedsindelingen via PDOK WFS, layer `gemeente_gegeneraliseerd` of the newest year |
 
-After updating a file, run `python -m municipality_hunter init --force` (or `docker compose run --rm init python -m municipality_hunter init --force`). All activities are re-intersected on the next sync.
+`assets/municipality-sources.json` records which release is in the repository, e.g. `{"ch": "swissboundaries3d_2026-01", "nl": "2026"}`.
+
+### Automatic updates
+
+The GitHub workflow [`update-municipalities`](.github/workflows/update-municipalities.yml) runs on the 1st of every month (GitHub's cron can't express "every 30 days") and can also be started by hand under *Actions → Update municipality data → Run workflow*. It:
+
+1. runs `ci/update-municipalities.sh`, which only downloads a dataset when its release differs from `municipality-sources.json`;
+2. if anything changed, loads the new files into a PostGIS service container with `municipality_hunter init --force`, checks the counts and runs the tests;
+3. opens a pull request from the branch `update/municipality-data`, or updates the open one.
+
+Most months nothing changes and no PR is created. swisstopo publishes about once or twice a year and CBS once a year.
+
+**One-time repository setting:** under *Settings → Actions → General → Workflow permissions*, enable **"Allow GitHub Actions to create and approve pull requests"**. Without it, the last step fails with "GitHub Actions is not permitted to create or approve pull requests". PRs created by the workflow don't trigger other workflows, which is why the checks run inside the update job.
+
+After merging the PR, restart the stack (`docker compose up -d --build`). `init` sees that `municipality-sources.json` changed and reloads the boundaries. Merged municipalities are removed, and all activities are re-intersected on the next sync.
+
+### Updating by hand
+
+```bash
+sudo apt-get install gdal-bin jq          # or: brew install gdal jq
+ci/update-municipalities.sh               # --force to regenerate even without a new release
+python -m municipality_hunter init        # reloads because the release changed
+```
 
 ## Repository layout
 
@@ -180,7 +202,8 @@ After updating a file, run `python -m municipality_hunter init --force` (or `doc
 | `tests/` | Strava client tests (mocked HTTP), the connect flow, and PostGIS intersection tests |
 | `assets/municipality-*.json` | boundary GeoJSON |
 | `assets/total-dashboard.json`, `dashboards.yaml`, `datasources.yaml` | Grafana provisioning |
-| `ci/` | scripts that regenerate the boundary data |
+| `ci/update-municipalities.sh` | downloads new boundary releases (used by the workflow) |
+| `.github/workflows/update-municipalities.yml` | monthly boundary update PR |
 | `Dockerfile` | app image (init, collector and web); `grafana.Dockerfile` is the Grafana image |
 
 ## Known limitations
@@ -197,6 +220,6 @@ After updating a file, run `python -m municipality_hunter init --force` (or `doc
 - [x] Store municipality geometries in the database (PostGIS)
 - [x] filter map for activity type
 - [ ] Count how many municipalities per canton; if all have been ridden, change color of whole canton
-- [ ] create pipeline for geojson files
+- [x] create pipeline for geojson files
 - [ ] create deployment
 - [ ] Belgium

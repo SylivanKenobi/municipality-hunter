@@ -79,3 +79,23 @@ def test_reloading_municipalities_marks_activities_for_reprocessing(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM activities WHERE processed_at IS NULL")
         assert cur.fetchone()[0] == 1
+
+
+def test_reloading_removes_merged_municipalities(conn):
+    def before():
+        yield {"country": "CH", "code": "1", "name": "Old", "canton": "1", "population": 1,
+               "geometry": square(8.0, 47.0, 0.01)}
+        yield {"country": "CH", "code": "2", "name": "Kept", "canton": "1", "population": 1,
+               "geometry": square(8.1, 47.0, 0.01)}
+        yield {"country": "NL", "code": "GM1", "name": "Other country", "canton": None,
+               "population": None, "geometry": square(5.0, 52.0, 0.01)}
+
+    def after():
+        yield {"country": "CH", "code": "2", "name": "Kept", "canton": "1", "population": 1,
+               "geometry": square(8.1, 47.0, 0.01)}
+
+    load_municipalities(conn, sources=(before,))
+    load_municipalities(conn, sources=(after,))
+    with conn.cursor() as cur:
+        cur.execute("SELECT country, code FROM municipalities ORDER BY 1, 2")
+        assert cur.fetchall() == [("CH", "2"), ("NL", "GM1")]

@@ -2,8 +2,8 @@ import argparse
 import logging
 
 from .config import Settings
-from .db import apply_schema, get_connection
-from .municipalities import load_municipalities, municipalities_loaded
+from .db import apply_schema, get_connection, get_state, set_state
+from .municipalities import load_municipalities, municipalities_loaded, source_versions
 from .sync import run_sync, run_sync_loop
 
 
@@ -11,10 +11,12 @@ def init(settings, force):
     conn = get_connection(settings)
     try:
         apply_schema(conn)
-        if force or not municipalities_loaded(conn):
+        versions = source_versions()
+        if force or not municipalities_loaded(conn) or get_state(conn, "municipality_sources") != versions:
             load_municipalities(conn)
+            set_state(conn, "municipality_sources", versions)
         else:
-            logging.info("Municipalities already loaded (use --force to reload)")
+            logging.info("Municipalities are up to date (use --force to reload)")
     finally:
         conn.close()
 

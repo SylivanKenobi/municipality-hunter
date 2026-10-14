@@ -41,6 +41,16 @@ def dutch_municipalities(path=ASSETS_DIR / "municipality-nl.json"):
 
 
 SOURCES = (swiss_municipalities, dutch_municipalities)
+# releases of the files above, written by ci/update-municipalities.sh
+SOURCE_VERSIONS = ASSETS_DIR / "municipality-sources.json"
+
+
+def source_versions():
+    try:
+        return json.dumps(json.loads(SOURCE_VERSIONS.read_text()), sort_keys=True)
+    except FileNotFoundError:
+        return ""
+
 
 UPSERT_MUNICIPALITY_SQL = """
     WITH g AS (
@@ -72,7 +82,9 @@ def load_municipalities(conn, sources=SOURCES):
     with conn.cursor() as cur:
         for source in sources:
             count = 0
+            loaded = {}
             for municipality in source():
+                loaded.setdefault(municipality["country"], []).append(municipality["code"])
                 params = dict(municipality, geometry=json.dumps(municipality["geometry"]))
                 cur.execute(UPSERT_MUNICIPALITY_SQL, params)
                 municipality_id = cur.fetchone()[0]
@@ -82,6 +94,11 @@ def load_municipalities(conn, sources=SOURCES):
                     SELECT id, ST_Subdivide(geom, 255) FROM municipalities WHERE id = %s
                 """, (municipality_id,))
                 count += 1
+            # municipalities that merged or were dissolved since the last load
+            for country, codes in loaded.items():
+                cur.execute("DELETE FROM municipalities WHERE country = %s AND code <> ALL(%s)", (country, codes))
+                if cur.rowcount:
+                    log.info("Removed %d municipalities from %s that no longer exist", cur.rowcount, country)
             log.info("Loaded %d municipalities from %s", count, source.__name__)
         cur.execute("UPDATE activities SET processed_at = NULL")
     conn.commit()
