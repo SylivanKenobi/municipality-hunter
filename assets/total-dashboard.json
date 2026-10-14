@@ -2697,6 +2697,42 @@
       ],
       "title": "Overall",
       "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P44368ADAD746BC27"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 31415926,
+      "title": "Municipalities visited",
+      "type": "table",
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P44368ADAD746BC27"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "refId": "A",
+          "rawSql": "SELECT m.country AS \"Country\",\n       count(DISTINCT am.municipality_id) AS \"Visited\",\n       count(DISTINCT m.id) AS \"Total\",\n       round(100.0 * count(DISTINCT am.municipality_id) / count(DISTINCT m.id), 1) AS \"Visited %\"\nFROM municipalities m\nLEFT JOIN activity_municipalities am ON am.municipality_id = m.id\n  AND am.activity_id IN (SELECT id FROM activities WHERE activity_type IN ($type) AND $__timeFilter(time))\nGROUP BY m.country ORDER BY m.country;"
+        }
+      ]
     }
   ],
   "preload": false,
